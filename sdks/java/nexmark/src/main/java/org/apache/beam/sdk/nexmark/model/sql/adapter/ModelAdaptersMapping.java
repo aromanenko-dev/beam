@@ -21,9 +21,10 @@ package org.apache.beam.sdk.nexmark.model.sql.adapter;
 import com.google.common.collect.ImmutableMap;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Date;
 import java.util.List;
 import java.util.Map;
-import org.apache.beam.sdk.extensions.sql.BeamRecordSqlType;
+import org.apache.beam.sdk.extensions.sql.RowSqlType;
 import org.apache.beam.sdk.nexmark.model.Auction;
 import org.apache.beam.sdk.nexmark.model.Bid;
 import org.apache.beam.sdk.nexmark.model.Person;
@@ -42,52 +43,64 @@ public class ModelAdaptersMapping {
 
   private static ModelFieldsAdapter<Person> personAdapter() {
     return new ModelFieldsAdapter<Person>(
-        BeamRecordSqlType.builder()
+        RowSqlType.builder()
             .withBigIntField("id")
             .withVarcharField("name")
             .withVarcharField("emailAddress")
             .withVarcharField("creditCard")
             .withVarcharField("city")
             .withVarcharField("state")
-            .withBigIntField("dateTime")
+            .withTimestampField("dateTime")
             .withVarcharField("extra")
             .build()) {
       @Override
       public List<Object> getFieldsValues(Person p) {
         return Collections.unmodifiableList(
             Arrays.asList(
-                p.id, p.name, p.emailAddress, p.creditCard, p.city, p.state, p.dateTime, p.extra));
+                p.id,
+                p.name,
+                p.emailAddress,
+                p.creditCard,
+                p.city,
+                p.state,
+                new Date(p.dateTime),
+                p.extra));
       }
     };
   }
 
   private static ModelFieldsAdapter<Bid> bidAdapter() {
     return new ModelFieldsAdapter<Bid>(
-        BeamRecordSqlType.builder()
+        RowSqlType.builder()
             .withBigIntField("auction")
             .withBigIntField("bidder")
             .withBigIntField("price")
-            .withBigIntField("dateTime")
+            .withTimestampField("dateTime")
             .withVarcharField("extra")
             .build()) {
       @Override
       public List<Object> getFieldsValues(Bid b) {
         return Collections.unmodifiableList(
-            Arrays.asList(b.auction, b.bidder, b.price, b.dateTime, b.extra));
+            Arrays.asList(
+                b.auction,
+                b.bidder,
+                b.price,
+                new Date(b.dateTime),
+                b.extra));
       }
     };
   }
 
   private static ModelFieldsAdapter<Auction> auctionAdapter() {
     return new ModelFieldsAdapter<Auction>(
-        BeamRecordSqlType.builder()
+        RowSqlType.builder()
             .withBigIntField("id")
             .withVarcharField("itemName")
             .withVarcharField("description")
             .withBigIntField("initialBid")
             .withBigIntField("reserve")
-            .withBigIntField("dateTime")
-            .withBigIntField("expires")
+            .withTimestampField("dateTime")
+            .withTimestampField("expires")
             .withBigIntField("seller")
             .withBigIntField("category")
             .withVarcharField("extra")
@@ -101,8 +114,8 @@ public class ModelAdaptersMapping {
                 a.description,
                 a.initialBid,
                 a.reserve,
-                a.dateTime,
-                a.expires,
+                new Date(a.dateTime),
+                new Date(a.expires),
                 a.seller,
                 a.category,
                 a.extra));

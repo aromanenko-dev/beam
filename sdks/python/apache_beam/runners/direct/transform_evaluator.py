@@ -26,11 +26,13 @@ import time
 import apache_beam.io as io
 from apache_beam import coders
 from apache_beam import pvalue
+from apache_beam import typehints
 from apache_beam.internal import pickler
 from apache_beam.runners import common
 from apache_beam.runners.common import DoFnRunner
 from apache_beam.runners.common import DoFnState
 from apache_beam.runners.dataflow.native_io.iobase import _NativeWrite  # pylint: disable=protected-access
+from apache_beam.runners.direct.direct_runner import _DirectReadStringsFromPubSub
 from apache_beam.runners.direct.direct_runner import _StreamingGroupAlsoByWindow
 from apache_beam.runners.direct.direct_runner import _StreamingGroupByKeyOnly
 from apache_beam.runners.direct.sdf_direct_runner import ProcessElements
@@ -67,7 +69,7 @@ class TransformEvaluatorRegistry(object):
     self._evaluation_context = evaluation_context
     self._evaluators = {
         io.Read: _BoundedReadEvaluator,
-        io.ReadStringsFromPubSub: _PubSubReadEvaluator,
+        _DirectReadStringsFromPubSub: _PubSubReadEvaluator,
         core.Flatten: _FlattenEvaluator,
         core.ParDo: _ParDoEvaluator,
         core._GroupByKeyOnly: _GroupByKeyOnlyEvaluator,
@@ -340,8 +342,8 @@ class _TestStreamEvaluator(_TransformEvaluator):
       assert event.new_watermark >= self.watermark
       self.watermark = event.new_watermark
     elif isinstance(event, ProcessingTimeEvent):
-      # TODO(ccy): advance processing time in the context's mock clock.
-      pass
+      self._evaluation_context._watermark_manager._clock.advance_time(
+          event.advance_by)
     else:
       raise ValueError('Invalid TestStream event: %s.' % event)
 
@@ -684,9 +686,10 @@ class _StreamingGroupByKeyOnlyEvaluator(_TransformEvaluator):
     self.output_pcollection = list(self._outputs)[0]
 
     # The input type of a GroupByKey will be KV[Any, Any] or more specific.
-    kv_type_hint = (
-        self._applied_ptransform.transform.get_type_hints().input_types[0])
-    self.key_coder = coders.registry.get_coder(kv_type_hint[0].tuple_types[0])
+    kv_type_hint = self._applied_ptransform.inputs[0].element_type
+    key_type_hint = (kv_type_hint.tuple_types[0] if kv_type_hint
+                     else typehints.Any)
+    self.key_coder = coders.registry.get_coder(key_type_hint)
 
   def process_element(self, element):
     if (isinstance(element, WindowedValue)
@@ -733,15 +736,17 @@ class _StreamingGroupAlsoByWindowEvaluator(_TransformEvaluator):
     self.output_pcollection = list(self._outputs)[0]
     self.step_context = self._execution_context.get_step_context()
     self.driver = create_trigger_driver(
-        self._applied_ptransform.transform.windowing)
+        self._applied_ptransform.transform.windowing,
+        clock=self._evaluation_context._watermark_manager._clock)
     self.gabw_items = []
     self.keyed_holds = {}
 
-    # The input type of a GroupAlsoByWindow will be KV[Any, Iter[Any]] or more
-    # specific.
-    kv_type_hint = (
-        self._applied_ptransform.transform.get_type_hints().input_types[0])
-    self.key_coder = coders.registry.get_coder(kv_type_hint[0].tuple_types[0])
+    # The input type (which is the same as the output type) of a
+    # GroupAlsoByWindow will be KV[Any, Iter[Any]] or more specific.
+    kv_type_hint = self._applied_ptransform.outputs[None].element_type
+    key_type_hint = (kv_type_hint.tuple_types[0] if kv_type_hint
+                     else typehints.Any)
+    self.key_coder = coders.registry.get_coder(key_type_hint)
 
   def process_element(self, element):
     kwi = element.value

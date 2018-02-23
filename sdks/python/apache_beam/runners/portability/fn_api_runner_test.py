@@ -125,11 +125,14 @@ class FnApiRunnerTest(
 
     counter = beam.metrics.Metrics.counter('ns', 'counter')
     distribution = beam.metrics.Metrics.distribution('ns', 'distribution')
+    gauge = beam.metrics.Metrics.gauge('ns', 'gauge')
+
     pcoll = p | beam.Create(['a', 'zzz'])
     # pylint: disable=expression-not-assigned
     pcoll | 'count1' >> beam.FlatMap(lambda x: counter.inc())
     pcoll | 'count2' >> beam.FlatMap(lambda x: counter.inc(len(x)))
     pcoll | 'dist' >> beam.FlatMap(lambda x: distribution.update(len(x)))
+    pcoll | 'gauge' >> beam.FlatMap(lambda x: gauge.set(len(x)))
 
     res = p.run()
     res.wait_until_finish()
@@ -141,9 +144,12 @@ class FnApiRunnerTest(
     self.assertEqual(c2.committed, 4)
     dist, = res.metrics().query(beam.metrics.MetricsFilter().with_step('dist'))[
         'distributions']
+    gaug, = res.metrics().query(
+        beam.metrics.MetricsFilter().with_step('gauge'))['gauges']
     self.assertEqual(
         dist.committed.data, beam.metrics.cells.DistributionData(4, 2, 1, 3))
     self.assertEqual(dist.committed.mean, 2.0)
+    self.assertEqual(gaug.committed.value, 3)
 
   def test_progress_metrics(self):
     p = self.create_pipeline()
@@ -153,7 +159,7 @@ class FnApiRunnerTest(
       self.skipTest('Progress metrics not supported.')
 
     _ = (p
-         | beam.Create([0, 0, 0, 2.1e-3 * DEFAULT_SAMPLING_PERIOD_MS])
+         | beam.Create([0, 0, 0, 5e-3 * DEFAULT_SAMPLING_PERIOD_MS])
          | beam.Map(time.sleep)
          | beam.Map(lambda x: ('key', x))
          | beam.GroupByKey()
@@ -180,7 +186,7 @@ class FnApiRunnerTest(
           pregbk_metrics.ptransforms['Map(sleep)']
           .processed_elements.measured.output_element_counts['None'])
       self.assertLessEqual(
-          2e-3 * DEFAULT_SAMPLING_PERIOD_MS,
+          4e-3 * DEFAULT_SAMPLING_PERIOD_MS,
           pregbk_metrics.ptransforms['Map(sleep)']
           .processed_elements.measured.total_time_spent)
       self.assertEqual(

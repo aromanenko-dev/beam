@@ -472,6 +472,7 @@ public class ElasticsearchIO {
       this.numSlices = numSlices;
       this.sliceId = sliceId;
     }
+
     @Override
     public List<? extends BoundedSource<String>> split(
         long desiredBundleSizeBytes, PipelineOptions options) throws Exception {
@@ -605,15 +606,12 @@ public class ElasticsearchIO {
       if (query == null) {
         query = "{\"query\": { \"match_all\": {} }}";
       }
-      if (source.backendVersion == 5){
-        //if there is more than one slice
-        if (source.numSlices != null && source.numSlices > 1){
-          // add slice to the user query
-          String sliceQuery = String
-              .format("\"slice\": {\"id\": %s,\"max\": %s}", source.sliceId,
-                  source.numSlices);
-          query = query.replaceFirst("\\{", "{" + sliceQuery + ",");
-        }
+      if (source.backendVersion == 5 && source.numSlices != null && source.numSlices > 1){
+        //if there is more than one slice, add the slice to the user query
+        String sliceQuery = String
+            .format("\"slice\": {\"id\": %s,\"max\": %s}", source.sliceId,
+                source.numSlices);
+        query = query.replaceFirst("\\{", "{" + sliceQuery + ",");
       }
       Response response;
       String endPoint =
@@ -861,6 +859,7 @@ public class ElasticsearchIO {
       }
     }
   }
+
   static int getBackendVersion(ConnectionConfiguration connectionConfiguration) {
     try (RestClient restClient = connectionConfiguration.createClient()) {
       Response response = restClient.performRequest("GET", "");
