@@ -23,6 +23,8 @@ import static org.apache.beam.vendor.guava.v26_0_jre.com.google.common.base.Prec
 
 import com.google.auto.service.AutoService;
 import com.google.auto.value.AutoValue;
+
+import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
 import java.lang.reflect.Method;
@@ -36,8 +38,20 @@ import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
 import javax.annotation.Nullable;
+
+import io.confluent.kafka.schemaregistry.client.CachedSchemaRegistryClient;
+import io.confluent.kafka.schemaregistry.client.MockSchemaRegistryClient;
+import io.confluent.kafka.schemaregistry.client.SchemaMetadata;
+import io.confluent.kafka.schemaregistry.client.SchemaRegistryClient;
+import io.confluent.kafka.schemaregistry.client.rest.exceptions.RestClientException;
+import io.confluent.kafka.serializers.AbstractKafkaAvroSerDeConfig;
+import io.confluent.kafka.serializers.KafkaAvroDeserializer;
+import io.confluent.kafka.serializers.KafkaAvroDeserializerConfig;
+import org.apache.avro.Schema;
+import org.apache.avro.generic.GenericRecord;
 import org.apache.beam.sdk.annotations.Experimental;
 import org.apache.beam.sdk.coders.AtomicCoder;
+import org.apache.beam.sdk.coders.AvroCoder;
 import org.apache.beam.sdk.coders.ByteArrayCoder;
 import org.apache.beam.sdk.coders.CannotProvideCoderException;
 import org.apache.beam.sdk.coders.Coder;
@@ -52,6 +66,7 @@ import org.apache.beam.sdk.io.UnboundedSource;
 import org.apache.beam.sdk.io.UnboundedSource.CheckpointMark;
 import org.apache.beam.sdk.options.PipelineOptions;
 import org.apache.beam.sdk.options.ValueProvider;
+import org.apache.beam.sdk.schemas.utils.AvroUtils;
 import org.apache.beam.sdk.transforms.DoFn;
 import org.apache.beam.sdk.transforms.ExternalTransformBuilder;
 import org.apache.beam.sdk.transforms.MapElements;
@@ -64,6 +79,7 @@ import org.apache.beam.sdk.values.KV;
 import org.apache.beam.sdk.values.PBegin;
 import org.apache.beam.sdk.values.PCollection;
 import org.apache.beam.sdk.values.PDone;
+import org.apache.beam.sdk.values.TypeDescriptor;
 import org.apache.beam.vendor.guava.v26_0_jre.com.google.common.annotations.VisibleForTesting;
 import org.apache.beam.vendor.guava.v26_0_jre.com.google.common.base.Joiner;
 import org.apache.beam.vendor.guava.v26_0_jre.com.google.common.collect.ImmutableList;
@@ -277,6 +293,148 @@ public class KafkaIO {
         .build();
   }
 
+  public static <V> Read<GenericRecord, V> readAvroKeys(
+      String schemaRegistryUrl, String keySubject) {
+
+    final Schema avroKeySchema = fetchAvroSchema(schemaRegistryUrl, keySubject);
+    Map<String, Object> consumerConfig = updateSchemaRegistryURL(schemaRegistryUrl);
+
+    return new AutoValue_KafkaIO_Read.Builder<GenericRecord, V>()
+        .setTopics(new ArrayList<>())
+        .setTopicPartitions(new ArrayList<>())
+        .setConsumerFactoryFn(Read.KAFKA_CONSUMER_FACTORY_FN)
+        .setConsumerConfig(consumerConfig)
+        .setMaxNumRecords(Long.MAX_VALUE)
+        .setCommitOffsetsInFinalizeEnabled(false)
+        .setTimestampPolicyFactory(TimestampPolicyFactory.withProcessingTime())
+        .setKeyDeserializer((Class) KafkaAvroDeserializer.class)
+        .setKeyCoder(AvroCoder.of(avroKeySchema))
+        .build();
+  }
+
+  public static <K> Read<K, GenericRecord> readAvroValues(
+      String schemaRegistryUrl, String valueSubject) {
+
+    final Schema avroValueSchema = fetchAvroSchema(schemaRegistryUrl, valueSubject);
+    Map<String, Object> consumerConfig = updateSchemaRegistryURL(schemaRegistryUrl);
+
+    return new AutoValue_KafkaIO_Read.Builder<K, GenericRecord>()
+        .setTopics(new ArrayList<>())
+        .setTopicPartitions(new ArrayList<>())
+        .setConsumerFactoryFn(Read.KAFKA_CONSUMER_FACTORY_FN)
+        .setConsumerConfig(consumerConfig)
+        .setMaxNumRecords(Long.MAX_VALUE)
+        .setCommitOffsetsInFinalizeEnabled(false)
+        .setTimestampPolicyFactory(TimestampPolicyFactory.withProcessingTime())
+        .setValueDeserializer((Class) KafkaAvroDeserializer.class)
+        .setValueCoder(AvroCoder.of(avroValueSchema))
+        .setAvroSchema(avroValueSchema.toString())
+        .build();
+  }
+
+  public static <K> Read<K, GenericRecord> readAvroValues2(
+      String schemaRegistryUrl, String valueSubject) {
+
+//    final Schema avroValueSchema = fetchAvroSchema(schemaRegistryUrl, valueSubject);
+//    Map<String, Object> consumerConfig = updateSchemaRegistryURL(schemaRegistryUrl);
+
+    return new AutoValue_KafkaIO_Read.Builder<K, GenericRecord>()
+        .setTopics(new ArrayList<>())
+        .setTopicPartitions(new ArrayList<>())
+        .setConsumerFactoryFn(Read.KAFKA_CONSUMER_FACTORY_FN)
+        .setConsumerConfig(Read.DEFAULT_CONSUMER_PROPERTIES)
+        .setMaxNumRecords(Long.MAX_VALUE)
+        .setCommitOffsetsInFinalizeEnabled(false)
+        .setTimestampPolicyFactory(TimestampPolicyFactory.withProcessingTime())
+        .setValueDeserializer((Class) KafkaAvroDeserializer.class)
+        .build();
+  }
+
+  public static <K> Read<K, GenericRecord> readAvroValues3() {
+    return read();
+  }
+
+  public static Read<GenericRecord, GenericRecord> readAvro(
+      String schemaRegistryUrl, String keySubject, String valueSubject) {
+
+    final Schema avroKeySchema = fetchAvroSchema(schemaRegistryUrl, keySubject);
+    final Schema avroValueSchema = fetchAvroSchema(schemaRegistryUrl, valueSubject);
+    Map<String, Object> consumerConfig = updateSchemaRegistryURL(schemaRegistryUrl);
+
+    return new AutoValue_KafkaIO_Read.Builder<GenericRecord, GenericRecord>()
+        .setTopics(new ArrayList<>())
+        .setTopicPartitions(new ArrayList<>())
+        .setConsumerFactoryFn(Read.KAFKA_CONSUMER_FACTORY_FN)
+        .setConsumerConfig(consumerConfig)
+        .setMaxNumRecords(Long.MAX_VALUE)
+        .setCommitOffsetsInFinalizeEnabled(false)
+        .setTimestampPolicyFactory(TimestampPolicyFactory.withProcessingTime())
+        .setKeyDeserializer((Class) KafkaAvroDeserializer.class)
+        .setKeyCoder(AvroCoder.of(avroKeySchema))
+        .setValueDeserializer((Class) KafkaAvroDeserializer.class)
+        .setValueCoder(AvroCoder.of(avroValueSchema))
+        .setAvroSchema(avroValueSchema.toString())
+        .build();
+  }
+
+  private static Map<String, Object> updateSchemaRegistryURL(String schemaRegistryUrl) {
+    return updateKafkaProperties(
+        Read.DEFAULT_CONSUMER_PROPERTIES,
+        Read.IGNORED_CONSUMER_PROPERTIES,
+        ImmutableMap.of(KafkaAvroDeserializerConfig.SCHEMA_REGISTRY_URL_CONFIG, schemaRegistryUrl));
+  }
+
+  private static final String SCHEMA_STRING =
+      "{\n"
+          + "  \"type\": \"record\",\n"
+          + "  \"name\": \"Payment\",\n"
+          + "  \"namespace\": \"io.confluent.examples.clients.basicavro\",\n"
+          + "  \"fields\": [\n"
+          + "    {\n"
+          + "      \"name\": \"id\",\n"
+          + "      \"type\": \"string\"\n"
+          + "    },\n"
+          + "    {\n"
+          + "      \"name\": \"amount\",\n"
+          + "      \"type\": \"double\"\n"
+          + "    }\n"
+          + "  ]\n"
+          + "}";
+
+  private static final Schema SCHEMA = new Schema.Parser().parse(SCHEMA_STRING);
+
+  private static Schema fetchAvroSchema(String schemaRegistryUrl, String subject) {
+
+    SchemaRegistryClient registryClient = new CachedSchemaRegistryClient(schemaRegistryUrl, 10);
+
+//    SchemaRegistryClient registryClient =
+//        (schemaRegistryUrl.startsWith("mock://"))
+//            ? new MockSchemaRegistryClient()
+//            : new CachedSchemaRegistryClient(schemaRegistryUrl, 10);
+
+//    SchemaRegistryClient registryClient = new MockSchemaRegistryClient();
+//    try {
+//      registryClient.register(subject, SCHEMA);
+//    } catch (IOException e) {
+////      e.printStackTrace();
+//    } catch (RestClientException e) {
+////      e.printStackTrace();
+//    }
+
+    SchemaMetadata latestSchemaMetadata;
+
+    try {
+      latestSchemaMetadata = registryClient.getLatestSchemaMetadata(subject);
+    } catch (IOException | RestClientException e) {
+      throw new IllegalArgumentException(
+          "Unable to get latest schema metadata for subject: " + subject, e);
+    }
+
+    final Schema avroSchema = new Schema.Parser().parse(latestSchemaMetadata.getSchema());
+    checkArgument(avroSchema != null, "Avro schema can't be null");
+    return avroSchema;
+  }
+
   /**
    * Creates an uninitialized {@link Write} {@link PTransform}. Before use, Kafka configuration
    * should be set with {@link Write#withBootstrapServers(String)} and {@link Write#withTopic} along
@@ -356,6 +514,15 @@ public class KafkaIO {
     @Nullable
     abstract Map<String, Object> getOffsetConsumerConfig();
 
+    @Nullable
+    abstract String getAvroSchema();
+
+    @Nullable
+    abstract SerializableFunction<String, SchemaRegistryClient> getSchemaRegistryClientFactoryFn();
+
+    @Nullable
+    abstract String getSubject();
+
     abstract Builder<K, V> toBuilder();
 
     @Experimental
@@ -394,6 +561,13 @@ public class KafkaIO {
           TimestampPolicyFactory<K, V> timestampPolicyFactory);
 
       abstract Builder<K, V> setOffsetConsumerConfig(Map<String, Object> offsetConsumerConfig);
+
+      abstract Builder<K, V> setAvroSchema(@Nullable String avroSchema);
+
+      abstract Builder<K, V> setSchemaRegistryClientFactoryFn(
+          SerializableFunction<String, SchemaRegistryClient> schemaRegistryClientFactoryFn);
+
+      abstract Builder<K, V> setSubject(@Nullable String subject);
 
       abstract Read<K, V> build();
 
@@ -498,6 +672,16 @@ public class KafkaIO {
       }
     }
 
+    public ReadAvro<K, GenericRecord> withAvroValues() {
+      return new ReadAvro((Read<K, GenericRecord>) this);
+//      return ReadAvro.ofValues((Read<K, GenericRecord>) this);
+    }
+
+    public ReadAvro<GenericRecord, V> withAvroKeys() {
+      return new ReadAvro((Read<K, GenericRecord>) this);
+//      return ReadAvro.ofValues((Read<GenericRecord, V>) this);
+    }
+
     /** Sets the bootstrap servers for the Kafka consumer. */
     public Read<K, V> withBootstrapServers(String bootstrapServers) {
       return withConsumerConfigUpdates(
@@ -593,6 +777,11 @@ public class KafkaIO {
     public Read<K, V> withConsumerFactoryFn(
         SerializableFunction<Map<String, Object>, Consumer<byte[], byte[]>> consumerFactoryFn) {
       return toBuilder().setConsumerFactoryFn(consumerFactoryFn).build();
+    }
+
+    public Read<K, V> withSchemaRegistryClientFactoryFn(
+        SerializableFunction<String, SchemaRegistryClient> schemaRegistryClientFactoryFn) {
+      return toBuilder().setSchemaRegistryClientFactoryFn(schemaRegistryClientFactoryFn).build();
     }
 
     /**
@@ -812,13 +1001,50 @@ public class KafkaIO {
       return toBuilder().setConsumerConfig(config).build();
     }
 
+    public Read<K, V> withSubject(String subject) {
+      return toBuilder().setSubject(subject).build();
+    }
+
     /** Returns a {@link PTransform} for PCollection of {@link KV}, dropping Kafka metatdata. */
     public PTransform<PBegin, PCollection<KV<K, V>>> withoutMetadata() {
       return new TypedWithoutMetadata<>(this);
     }
 
+    @Experimental(Experimental.Kind.SCHEMAS)
+    public PTransform<PBegin, PCollection<GenericRecord>> valuesAsGenericRecords() {
+      return new ValuesAsGenericRecords<K>((Read<K, GenericRecord>) this);
+    }
+
     @Override
     public PCollection<KafkaRecord<K, V>> expand(PBegin input) {
+//      SchemaRegistryClient registryClient =
+//          new CachedSchemaRegistryClient(
+//              "http://localhost:8081",
+//              AbstractKafkaAvroSerDeConfig.MAX_SCHEMAS_PER_SUBJECT_DEFAULT);
+//
+//      //    SchemaRegistryClient registryClient = new MockSchemaRegistryClient();
+//      //    try {
+//      //      registryClient.register(subject, SCHEMA);
+//      //    } catch (IOException e) {
+//      ////      e.printStackTrace();
+//      //    } catch (RestClientException e) {
+//      ////      e.printStackTrace();
+//      //    }
+//
+//      SchemaMetadata latestSchemaMetadata;
+//      final String subject = getSubject();
+//
+//      try {
+//        latestSchemaMetadata = registryClient.getLatestSchemaMetadata(subject);
+//      } catch (IOException | RestClientException e) {
+//        throw new IllegalArgumentException(
+//            "Unable to get latest schema metadata for subject: " + subject, e);
+//      }
+//
+//      final Schema avroSchema = new Schema.Parser().parse(latestSchemaMetadata.getSchema());
+//      checkArgument(avroSchema != null, "Avro schema can't be null");
+//
+
       checkArgument(
           getConsumerConfig().get(ConsumerConfig.BOOTSTRAP_SERVERS_CONFIG) != null,
           "withBootstrapServers() is required");
@@ -1000,6 +1226,128 @@ public class KafkaIO {
                       ctx.output(ctx.element().getKV());
                     }
                   }));
+    }
+
+    @Override
+    public void populateDisplayData(DisplayData.Builder builder) {
+      super.populateDisplayData(builder);
+      read.populateDisplayData(builder);
+    }
+  }
+
+  public static class ReadAvro<K, V> extends PTransform<PBegin, PCollection<KafkaRecord<K, V>>> {
+    private Read<K, V> read;
+    private boolean isValues;
+//    private SchemaRegistryClient registryClient;
+
+    ReadAvro(Read<K, V> read) {
+      super("KafkaIO.Read");
+      this.read = read;
+    }
+
+//    public <K, V>ReadAvro<K, V> withSchemaRegistryClient(SchemaRegistryClient registryClient) {
+//      this.registryClient = registryClient;
+//      return this;
+//    }
+
+//    public static <K, V>ReadAvro<K, V> ofValues(Read<K, V> read) {
+//      final Schema avroSchema = getSchema(read);
+//      checkArgument(avroSchema != null, "Avro schema can't be null");
+//
+//      read =
+//          read.toBuilder()
+//              .setValueDeserializer((Class) KafkaAvroDeserializer.class)
+//              .setValueCoder(AvroCoder.of(avroSchema))
+//              .build();
+//
+//      return new ReadAvro<>(read);
+//    }
+
+//    public static <K, V>ReadAvro<K, V> ofKeys(Read<K, V> read) {
+//      final Schema avroSchema = getSchema(read);
+//      checkArgument(avroSchema != null, "Avro schema can't be null");
+//
+//      read =
+//          read.toBuilder()
+//              .setKeyDeserializer((Class) KafkaAvroDeserializer.class)
+//              .setKeyCoder(AvroCoder.of(avroSchema))
+//              .build();
+//
+//      return new ReadAvro<>(read);
+//    }
+
+    private static <K, V> Schema getSchema(Read<K, V> read) {
+      SchemaRegistryClient registryClient;
+      if (read.getSchemaRegistryClientFactoryFn() != null) {
+        registryClient = read.getSchemaRegistryClientFactoryFn().apply(read.getSubject());
+      } else {
+        registryClient =
+            new CachedSchemaRegistryClient(
+                (String)
+                    read.getConsumerConfig()
+                        .get(AbstractKafkaAvroSerDeConfig.SCHEMA_REGISTRY_URL_CONFIG),
+                AbstractKafkaAvroSerDeConfig.MAX_SCHEMAS_PER_SUBJECT_DEFAULT);
+      }
+
+      SchemaMetadata latestSchemaMetadata;
+      final String subject = read.getSubject();
+
+      try {
+        latestSchemaMetadata = registryClient.getLatestSchemaMetadata(subject);
+      } catch (IOException | RestClientException e) {
+        throw new IllegalArgumentException(
+            "Unable to get latest schema metadata for subject: " + subject, e);
+      }
+
+      return new Schema.Parser().parse(latestSchemaMetadata.getSchema());
+    }
+
+    @Override
+    public PCollection<KafkaRecord<K, V>> expand(PBegin begin) {
+      final Schema avroSchema = getSchema(read);
+      checkArgument(avroSchema != null, "Avro schema can't be null");
+      System.out.println("avroSchema.toString() = " + avroSchema.toString());
+
+      read =
+          read.toBuilder()
+              .setValueDeserializer((Class) KafkaAvroDeserializer.class)
+              .setValueCoder(AvroCoder.of(avroSchema))
+              .build();
+
+      return begin.apply(read);
+    }
+  }
+
+  public static class ValuesAsGenericRecords<K> extends PTransform<PBegin, PCollection<GenericRecord>> {
+    private final Read<K, GenericRecord> read;
+
+    ValuesAsGenericRecords(Read<K, GenericRecord> read) {
+      super("KafkaIO.Read");
+      this.read = read;
+    }
+
+    @Override
+    public PCollection<GenericRecord> expand(PBegin begin) {
+      final org.apache.avro.Schema avroSchema = new Schema.Parser().parse(read.getAvroSchema());
+      final org.apache.beam.sdk.schemas.Schema beamSchema =
+          AvroUtils.getSchema(GenericRecord.class, avroSchema);
+
+      return begin
+          .apply(read)
+          .apply(
+              "Remove Kafka Metadata",
+              ParDo.of(
+                  new DoFn<KafkaRecord<K, GenericRecord>, GenericRecord>() {
+                    @ProcessElement
+                    public void processElement(ProcessContext ctx) {
+                      ctx.output(ctx.element().getKV().getValue());
+                    }
+                  }))
+          .setSchema(
+              beamSchema,
+              TypeDescriptor.of(GenericRecord.class),
+              AvroUtils.getToRowFunction(GenericRecord.class, avroSchema),
+              AvroUtils.getFromRowFunction(GenericRecord.class));
     }
 
     @Override

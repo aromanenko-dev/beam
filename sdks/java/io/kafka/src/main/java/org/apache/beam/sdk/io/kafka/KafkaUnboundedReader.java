@@ -42,6 +42,9 @@ import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicReference;
 import java.util.stream.Collectors;
 import javax.annotation.Nullable;
+
+import io.confluent.kafka.schemaregistry.client.SchemaRegistryClient;
+import io.confluent.kafka.serializers.KafkaAvroDeserializer;
 import org.apache.beam.sdk.io.UnboundedSource;
 import org.apache.beam.sdk.io.UnboundedSource.CheckpointMark;
 import org.apache.beam.sdk.io.UnboundedSource.UnboundedReader;
@@ -88,8 +91,14 @@ class KafkaUnboundedReader<K, V> extends UnboundedReader<KafkaRecord<K, V>> {
 
     try {
       keyDeserializerInstance = spec.getKeyDeserializer().getDeclaredConstructor().newInstance();
-      valueDeserializerInstance =
-          spec.getValueDeserializer().getDeclaredConstructor().newInstance();
+
+      if (spec.getSchemaRegistryClientFactoryFn() != null) {
+        SchemaRegistryClient registryClient = spec.getSchemaRegistryClientFactoryFn().apply(spec.getSubject());
+        valueDeserializerInstance = (Deserializer)new KafkaAvroDeserializer(registryClient);
+      } else {
+        valueDeserializerInstance =
+            spec.getValueDeserializer().getDeclaredConstructor().newInstance();
+      }
     } catch (InstantiationException
         | IllegalAccessException
         | InvocationTargetException

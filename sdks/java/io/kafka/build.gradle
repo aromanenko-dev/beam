@@ -34,12 +34,15 @@ dependencies {
   compile library.java.jackson_annotations
   compile library.java.jackson_databind
   compile "org.springframework:spring-expression:4.3.18.RELEASE"
+  compile "io.confluent:kafka-schema-registry-client:5.3.0"
+  compile "io.confluent:kafka-avro-serializer:5.3.0"
   testCompile project(path: ":sdks:java:core", configuration: "shadowTest")
   testCompile project(":sdks:java:io:synthetic")
   testCompile project(path: ":sdks:java:io:common", configuration: "testRuntime")
   testCompile project(path: ":sdks:java:testing:test-utils", configuration: "testRuntime")
   // For testing Cross-language transforms
   testCompile project(":runners:core-construction-java")
+  testCompile project(":sdks:java:extensions:sql")
   testCompile library.java.hamcrest_core
   testCompile library.java.hamcrest_library
   testCompile library.java.junit
